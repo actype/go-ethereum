@@ -471,18 +471,38 @@ func (typedData *TypedData) EncodeData(primaryType string, data map[string]inter
 			}
 
 			arrayBuffer := bytes.Buffer{}
-			parsedType := strings.Split(encType, "[")[0]
+			split := strings.Split(encType, "[")
+			parsedType := split[0]
 			for _, item := range arrayValue {
 				if typedData.Types[parsedType] != nil {
-					mapValue, ok := item.(map[string]interface{})
-					if !ok {
-						return nil, dataMismatchError(parsedType, item)
+					// Only support up to Type[][] for now, this is needed for OpenSea & MagicEden bulk buy
+					if len(split) == 3 {
+						internalArr, err := convertDataToSlice(item)
+						if err != nil {
+							return nil, dataMismatchError(encType, encValue)
+						}
+						for _, item := range internalArr {
+							mapValue, ok := item.(map[string]interface{})
+							if !ok {
+								return nil, dataMismatchError(parsedType, item)
+							}
+							encodedData, err := typedData.EncodeData(parsedType, mapValue, depth+1)
+							if err != nil {
+								return nil, err
+							}
+							arrayBuffer.Write(crypto.Keccak256(encodedData))
+						}
+					} else {
+						mapValue, ok := item.(map[string]interface{})
+						if !ok {
+							return nil, dataMismatchError(parsedType, item)
+						}
+						encodedData, err := typedData.EncodeData(parsedType, mapValue, depth+1)
+						if err != nil {
+							return nil, err
+						}
+						arrayBuffer.Write(crypto.Keccak256(encodedData))
 					}
-					encodedData, err := typedData.EncodeData(parsedType, mapValue, depth+1)
-					if err != nil {
-						return nil, err
-					}
-					arrayBuffer.Write(crypto.Keccak256(encodedData))
 				} else {
 					bytesValue, err := typedData.EncodePrimitiveValue(parsedType, item, depth)
 					if err != nil {
