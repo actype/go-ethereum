@@ -472,36 +472,20 @@ func (typedData *TypedData) EncodeData(primaryType string, data map[string]inter
 
 			arrayBuffer := bytes.Buffer{}
 			split := strings.Split(encType, "[")
+			dimension := len(split) - 1
+			itemDimension := dimension - 1
 			parsedType := split[0]
 			for _, item := range arrayValue {
 				if typedData.Types[parsedType] != nil {
-					// Only support up to Type[][] for now, this is needed for OpenSea & MagicEden bulk buy
-					if len(split) == 3 {
-						internalArr, err := convertDataToSlice(item)
-						if err != nil {
-							return nil, dataMismatchError(encType, encValue)
-						}
-						for _, item := range internalArr {
-							mapValue, ok := item.(map[string]interface{})
-							if !ok {
-								return nil, dataMismatchError(parsedType, item)
-							}
-							encodedData, err := typedData.EncodeData(parsedType, mapValue, depth+1)
-							if err != nil {
-								return nil, err
-							}
-							arrayBuffer.Write(crypto.Keccak256(encodedData))
-						}
-					} else {
-						mapValue, ok := item.(map[string]interface{})
-						if !ok {
-							return nil, dataMismatchError(parsedType, item)
-						}
-						encodedData, err := typedData.EncodeData(parsedType, mapValue, depth+1)
+					internalItems, err := flattenTypedDataArrayItem(item, encType, encValue, itemDimension)
+					if err != nil {
+						return nil, err
+					}
+					for _, item := range internalItems {
+						err := writeTypedData(parsedType, typedData, item, &arrayBuffer, depth)
 						if err != nil {
 							return nil, err
 						}
-						arrayBuffer.Write(crypto.Keccak256(encodedData))
 					}
 				} else {
 					bytesValue, err := typedData.EncodePrimitiveValue(parsedType, item, depth)
@@ -532,6 +516,39 @@ func (typedData *TypedData) EncodeData(primaryType string, data map[string]inter
 		}
 	}
 	return buffer.Bytes(), nil
+}
+
+func flattenTypedDataArrayItem(item interface{}, encType string, encValue interface{}, dimension int) ([]interface{}, error) {
+	if dimension == 0 {
+		return []interface{}{item}, nil
+	} else {
+		internalArr, err := convertDataToSlice(item)
+		if err != nil {
+			return nil, dataMismatchError(encType, encValue)
+		}
+		var agg []interface{}
+		for _, item := range internalArr {
+			res, err := flattenTypedDataArrayItem(item, encType, encValue, dimension-1)
+			if err != nil {
+				return nil, dataMismatchError(encType, encValue)
+			}
+			agg = append(agg, res...)
+		}
+		return agg, nil
+	}
+}
+
+func writeTypedData(parsedType string, typedData *TypedData, item interface{}, arrayBuffer *bytes.Buffer, depth int) error {
+	mapValue, ok := item.(map[string]interface{})
+	if !ok {
+		return dataMismatchError(parsedType, item)
+	}
+	encodedData, err := typedData.EncodeData(parsedType, mapValue, depth+1)
+	if err != nil {
+		return err
+	}
+	arrayBuffer.Write(crypto.Keccak256(encodedData))
+	return nil
 }
 
 // Attempt to parse bytes in different formats: byte array, hex string, hexutil.Bytes.
